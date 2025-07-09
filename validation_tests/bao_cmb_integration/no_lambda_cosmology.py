@@ -583,6 +583,214 @@ class NoLambdaCosmology:
         
         return l_peak
     
+    def hubble_distance(self, z: np.ndarray, theta: float = 0, phi: float = 0) -> np.ndarray:
+        """
+        Хъбъл разстояние D_H(z) = c / H(z) БЕЗ тъмна енергия
+        
+        Args:
+            z: Червено отместване
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            D_H(z,θ,φ) в Mpc
+        """
+        z = np.asarray(z)
+        
+        # Хъбъл функция с анизотропни корекции
+        H_z = self.hubble_function(z, theta, phi)  # км/с/Mpc
+        
+        # Хъбъл разстояние
+        D_H = (c / 1000) / H_z  # Mpc (поправка за единици)
+        
+        return D_H
+    
+    def dv_distance(self, z: np.ndarray, theta: float = 0, phi: float = 0) -> np.ndarray:
+        """
+        Обемно-усреднено разстояние D_V(z) БЕЗ тъмна енергия
+        
+        D_V(z) = [D_A(z)^2 * D_H(z) * z]^(1/3)
+        
+        Args:
+            z: Червено отместване
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            D_V(z,θ,φ) в Mpc
+        """
+        z = np.asarray(z)
+        
+        # Ъглово разстояние
+        D_A = self.angular_diameter_distance(z, theta, phi)
+        
+        # Хъбъл разстояние
+        D_H = self.hubble_distance(z, theta, phi)
+        
+        # Обемно-усреднено разстояние
+        D_V = (D_A**2 * D_H * z)**(1/3)
+        
+        return D_V
+    
+    def bao_distance_measures(self, z: np.ndarray, theta: float = 0, phi: float = 0) -> Dict[str, np.ndarray]:
+        """
+        Всички BAO разстояния и техните отношения към звуковия хоризонт
+        
+        Args:
+            z: Червено отместване
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            Речник с всички BAO измервания
+        """
+        z = np.asarray(z)
+        
+        # Основни разстояния
+        D_A = self.angular_diameter_distance(z, theta, phi)
+        D_H = self.hubble_distance(z, theta, phi)
+        D_V = self.dv_distance(z, theta, phi)
+        
+        # Звуков хоризонт при drag epoch
+        r_s = self.sound_horizon_scale(self.z_drag, theta, phi)
+        
+        # Отношения към звуковия хоризонт
+        DA_rs = D_A / r_s
+        DH_rs = D_H / r_s
+        DV_rs = D_V / r_s
+        
+        return {
+            'D_A': D_A,
+            'D_H': D_H,
+            'D_V': D_V,
+            'r_s': r_s,
+            'DA_rs': DA_rs,
+            'DH_rs': DH_rs,
+            'DV_rs': DV_rs,
+            'z': z
+        }
+    
+    def calculate_bao_predictions(self, z_values: np.ndarray, theta: float = 0, phi: float = 0) -> Dict[str, np.ndarray]:
+        """
+        Изчисляване на BAO предсказания за дадени редshift стойности
+        
+        Args:
+            z_values: Масив с червени отмествания
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            Речник с BAO предсказания готови за likelihood анализ
+        """
+        z_values = np.asarray(z_values)
+        
+        # Изчисляване на всички BAO измервания
+        bao_measures = self.bao_distance_measures(z_values, theta, phi)
+        
+        # Връщане в формат подходящ за likelihood функцията
+        return {
+            'DA_rs': bao_measures['DA_rs'],
+            'DH_rs': bao_measures['DH_rs'],
+            'DV_rs': bao_measures['DV_rs'],
+            'z': z_values
+        }
+    
+    def luminosity_distance(self, z: np.ndarray, theta: float = 0, phi: float = 0) -> np.ndarray:
+        """
+        Luminosity разстояние D_L(z) за Type Ia Supernovae
+        
+        Args:
+            z: Червено отместване
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            D_L(z,θ,φ) в Mpc
+        """
+        z = np.asarray(z)
+        
+        # Comoving distance
+        D_C = self.comoving_distance(z, theta, phi)
+        
+        # Luminosity distance със scaling factor
+        D_L = D_C * (1 + z)
+        
+        return D_L
+    
+    def distance_modulus(self, z: np.ndarray, theta: float = 0, phi: float = 0) -> np.ndarray:
+        """
+        Distance modulus μ(z) = 5 * log10(D_L/10 pc) за SN Ia
+        
+        Args:
+            z: Червено отместване  
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            μ(z,θ,φ) в magnitudes
+        """
+        z = np.asarray(z)
+        
+        # Luminosity distance в Mpc
+        D_L = self.luminosity_distance(z, theta, phi)
+        
+        # Distance modulus формула
+        # μ = 5 * log10(D_L / 10 pc) = 5 * log10(D_L[Mpc]) + 25
+        mu = 5.0 * np.log10(D_L) + 25.0
+        
+        return mu
+    
+    def snia_predictions(self, z_values: np.ndarray, theta: float = 0, phi: float = 0) -> Dict:
+        """
+        Предсказания за Type Ia Supernovae наблюдения
+        
+        Args:
+            z_values: Redshift стойности за SN Ia
+            theta: Полярен ъгъл
+            phi: Азимутен ъгъл
+            
+        Returns:
+            Речник с SN Ia предсказания
+        """
+        z_values = np.asarray(z_values)
+        
+        # Luminosity distance
+        D_L = self.luminosity_distance(z_values, theta, phi)
+        
+        # Distance modulus
+        mu = self.distance_modulus(z_values, theta, phi)
+        
+        # Apparent magnitude (без absolute magnitude калибрация)
+        # m = M + μ, където M се определя от калибрацията
+        
+        return {
+            'redshifts': z_values,
+            'luminosity_distance': D_L,
+            'distance_modulus': mu,
+            'description': f'SN Ia предсказания за No-Lambda космология (H₀={self.H0:.1f}, Ωₘ={self.Omega_m:.3f})'
+        }
+    
+    def h0_prediction(self) -> Dict:
+        """
+        Предсказание за H₀ от No-Lambda модела
+        
+        Returns:
+            Речник с H₀ предсказание
+        """
+        
+        # В No-Lambda модел H₀ е основен параметър
+        # Но може да има корекции от други физически ефекти
+        
+        # Ефективно H₀ с корекции
+        H0_effective = self.H0 * (1 + self.epsilon_cmb)  # CMB корекция влияе на разстояния
+        
+        return {
+            'H0': self.H0,
+            'H0_effective': H0_effective,
+            'H0_uncertainty': 0.1 * self.H0,  # Модел uncertainty
+            'description': f'H₀ предсказание от No-Lambda модел'
+        }
+
     def diagnostics(self) -> Dict[str, float]:
         """
         Диагностики на модела без тъмна енергия

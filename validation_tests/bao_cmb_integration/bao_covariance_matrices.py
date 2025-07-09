@@ -98,20 +98,38 @@ class BAOCovarianceMatrices:
         logger.info(f"eBOSS DR16 ковариационна матрица: {n_eboss}x{n_eboss}")
     
     def _generate_combined_covariance(self):
-        """Генериране на комбинирана ковариационна матрица"""
+        """Генериране на комбинирана ковариационна матрица за всички BAO данни"""
         
-        # Всички z точки
-        z_all = np.array([0.380, 0.510, 0.610, 0.700, 0.850, 1.480])
-        n_all = len(z_all)
+        # Всички z точки от всички surveys
+        z_all = np.array([
+            # BOSS DR12
+            0.38, 0.51, 0.61,
+            # eBOSS DR16
+            0.70, 0.85, 1.48,
+            # 6dFGS
+            0.106,
+            # WiggleZ
+            0.44, 0.60, 0.73
+        ])
         
         # Диагонални грешки за всички точки
-        diag_errors = np.array([0.787, 0.902, 1.226, 1.601, 1.709, 1.802])
+        diag_errors = np.array([
+            # BOSS DR12
+            0.38, 0.45, 0.51,
+            # eBOSS DR16
+            0.54, 0.64, 0.75,
+            # 6dFGS
+            0.29,
+            # WiggleZ
+            0.85, 1.07, 1.31
+        ])
+        
+        n_all = len(z_all)
         
         # Създаване на базова диагонална матрица
         cov_combined = np.diag(diag_errors**2)
         
         # Корелационна матрица за всички точки
-        # Корелацията намалява с разстоянието в z
         correlation_matrix = np.eye(n_all)
         
         for i in range(n_all):
@@ -119,13 +137,19 @@ class BAOCovarianceMatrices:
                 if i != j:
                     z_separation = abs(z_all[i] - z_all[j])
                     
-                    # Корелацията намалява експоненциално с разстоянието
-                    if z_separation < 0.2:
-                        correlation = 0.35 * np.exp(-z_separation / 0.1)
-                    elif z_separation < 0.5:
-                        correlation = 0.25 * np.exp(-z_separation / 0.2)
+                    # Корелацията зависи от близостта в z и survey
+                    if z_separation < 0.1:
+                        correlation = 0.4 * np.exp(-z_separation / 0.05)
+                    elif z_separation < 0.3:
+                        correlation = 0.3 * np.exp(-z_separation / 0.1)
+                    elif z_separation < 0.6:
+                        correlation = 0.2 * np.exp(-z_separation / 0.2)
                     else:
-                        correlation = 0.10 * np.exp(-z_separation / 0.3)
+                        correlation = 0.1 * np.exp(-z_separation / 0.4)
+                    
+                    # Специални корелации за същите surveys
+                    if self._same_survey(i, j):
+                        correlation *= 1.5  # По-силна корелация в същия survey
                     
                     correlation_matrix[i, j] = correlation
                     
@@ -136,10 +160,31 @@ class BAOCovarianceMatrices:
             'redshifts': z_all,
             'covariance': cov_combined,
             'correlation': correlation_matrix,
-            'description': 'Комбинирана BAO ковариационна матрица'
+            'description': 'Комбинирана BAO ковариационна матрица (всички 10 точки)'
         }
         
         logger.info(f"Комбинирана ковариационна матрица: {n_all}x{n_all}")
+    
+    def _same_survey(self, i: int, j: int) -> bool:
+        """Проверка дали две точки са от същия survey"""
+        
+        # Индекси на surveys:
+        # BOSS DR12: 0, 1, 2
+        # eBOSS DR16: 3, 4, 5
+        # 6dFGS: 6
+        # WiggleZ: 7, 8, 9
+        
+        boss_indices = [0, 1, 2]
+        eboss_indices = [3, 4, 5]
+        sidf_indices = [6]
+        wigglez_indices = [7, 8, 9]
+        
+        return (
+            (i in boss_indices and j in boss_indices) or
+            (i in eboss_indices and j in eboss_indices) or
+            (i in sidf_indices and j in sidf_indices) or
+            (i in wigglez_indices and j in wigglez_indices)
+        )
     
     def get_full_covariance_matrix(self, survey_name: str = 'Combined') -> np.ndarray:
         """
@@ -315,6 +360,92 @@ class BAOCovarianceMatrices:
             # Condition number
             condition_number = np.linalg.cond(data['covariance'])
             print(f"  Condition number: {condition_number:.2e}")
+
+    def get_dataset_covariance_matrix(self, dataset_name: str, n_measurements: int) -> np.ndarray:
+        """
+        Получаване на ковариационна матрица за конкретен dataset с анизотропни измервания
+        
+        Args:
+            dataset_name: Име на проучването
+            n_measurements: Брой измервания (включително анизотропни)
+            
+        Returns:
+            Ковариационна матрица с правилния размер
+        """
+        
+        # Опит за получаване на съществуваща матрица
+        if dataset_name in self.covariance_matrices:
+            base_cov = self.covariance_matrices[dataset_name]['covariance']
+            
+            # Ако размерът съвпада, върни директно
+            if base_cov.shape[0] == n_measurements:
+                return base_cov
+            
+            # Ако имаме анизотропни измервания (DA/rs, DH/rs, DV/rs)
+            if n_measurements > base_cov.shape[0]:
+                # Разширяване на матрицата за анизотропни измервания
+                expanded_cov = np.zeros((n_measurements, n_measurements))
+                
+                # Основна матрица за DV/rs
+                n_basic = base_cov.shape[0]
+                expanded_cov[:n_basic, :n_basic] = base_cov
+                
+                # Добавяне на блокове за DA/rs и DH/rs
+                if n_measurements >= 2 * n_basic:
+                    # DA/rs блок (по-малки грешки)
+                    da_scaling = 0.8
+                    expanded_cov[n_basic:2*n_basic, n_basic:2*n_basic] = base_cov * da_scaling**2
+                    
+                    if n_measurements >= 3 * n_basic:
+                        # DH/rs блок (по-големи грешки)
+                        dh_scaling = 1.2
+                        expanded_cov[2*n_basic:3*n_basic, 2*n_basic:3*n_basic] = base_cov * dh_scaling**2
+                        
+                        # Кръстосани корелации
+                        cross_corr = -0.3  # Анти-корелация между DA/rs и DH/rs
+                        
+                        # DA/rs - DH/rs корелация
+                        expanded_cov[n_basic:2*n_basic, 2*n_basic:3*n_basic] = base_cov * cross_corr * da_scaling * dh_scaling
+                        expanded_cov[2*n_basic:3*n_basic, n_basic:2*n_basic] = base_cov * cross_corr * da_scaling * dh_scaling
+                        
+                        # DV/rs - DA/rs корелация
+                        expanded_cov[:n_basic, n_basic:2*n_basic] = base_cov * 0.5
+                        expanded_cov[n_basic:2*n_basic, :n_basic] = base_cov * 0.5
+                        
+                        # DV/rs - DH/rs корелация
+                        expanded_cov[:n_basic, 2*n_basic:3*n_basic] = base_cov * 0.4
+                        expanded_cov[2*n_basic:3*n_basic, :n_basic] = base_cov * 0.4
+                
+                return expanded_cov
+        
+        # Fallback: диагонална матрица
+        logger.warning(f"Използване на диагонална матрица за {dataset_name} с {n_measurements} измервания")
+        
+        # Основни грешки (приблизително)
+        base_errors = np.array([0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2])
+        
+        # Разширяване ако е нужно
+        if n_measurements > len(base_errors):
+            base_errors = np.tile(base_errors, (n_measurements // len(base_errors)) + 1)
+        
+        errors = base_errors[:n_measurements]
+        
+        # Анизотропно мащабиране
+        if n_measurements > 10:  # Ако има анизотропни измервания
+            n_basic = n_measurements // 3
+            
+            # DV/rs грешки
+            errors[:n_basic] = errors[:n_basic] * 1.0
+            
+            # DA/rs грешки (по-точни)
+            if n_measurements >= 2 * n_basic:
+                errors[n_basic:2*n_basic] = errors[n_basic:2*n_basic] * 0.8
+            
+            # DH/rs грешки (по-неточни)
+            if n_measurements >= 3 * n_basic:
+                errors[2*n_basic:3*n_basic] = errors[2*n_basic:3*n_basic] * 1.2
+        
+        return np.diag(errors**2)
 
 
 def test_bao_covariance_matrices():

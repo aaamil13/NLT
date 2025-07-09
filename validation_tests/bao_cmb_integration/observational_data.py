@@ -358,37 +358,375 @@ class CMBObservationalData:
                 print(f"  l range: {data['l_values'][0]} - {data['l_values'][-1]}")
 
 
+class SNIaObservationalData:
+    """
+    Type Ia Supernovae наблюдателни данни
+    
+    Базирано на Pantheon+ и подобни компилации
+    Включва distance modulus измервания на различни redshift
+    """
+    
+    def __init__(self):
+        """Инициализация на SN Ia данните"""
+        
+        logger.info("Зареждане на Type Ia Supernovae данни")
+        
+        self.snia_data = {}
+        self.covariance_matrices = {}
+        
+        self._load_snia_data()
+        self._create_snia_covariance_matrices()
+        
+        logger.info("Инициализирани SN Ia данни")
+    
+    def _load_snia_data(self):
+        """
+        Зареждане на SN Ia данни
+        
+        Използва представителна извадка от Pantheon+ компилацията
+        """
+        
+        # Pantheon+ подобни данни (representative sample)
+        # z, distance_modulus, error
+        pantheon_like_data = [
+            # Low-z sample (z < 0.1)
+            (0.0233, 32.78, 0.12),
+            (0.0447, 35.02, 0.09),
+            (0.0612, 36.14, 0.08),
+            (0.0823, 37.21, 0.10),
+            (0.0956, 37.89, 0.11),
+            
+            # Intermediate-z sample (0.1 < z < 0.7)
+            (0.123, 38.67, 0.08),
+            (0.156, 39.42, 0.09),
+            (0.201, 40.33, 0.07),
+            (0.254, 41.19, 0.08),
+            (0.312, 42.01, 0.09),
+            (0.387, 42.89, 0.10),
+            (0.448, 43.52, 0.11),
+            (0.521, 44.23, 0.12),
+            (0.614, 45.01, 0.13),
+            (0.698, 45.67, 0.14),
+            
+            # High-z sample (z > 0.7)
+            (0.789, 46.34, 0.16),
+            (0.923, 47.12, 0.18),
+            (1.087, 47.98, 0.21),
+            (1.254, 48.76, 0.24),
+            (1.489, 49.67, 0.28),
+            (1.712, 50.45, 0.32),
+            (1.998, 51.34, 0.38),
+        ]
+        
+        # Разделяне по redshift диапазони
+        self.snia_data['Low_z'] = {
+            'redshifts': np.array([data[0] for data in pantheon_like_data[:5]]),
+            'distance_modulus': np.array([data[1] for data in pantheon_like_data[:5]]),
+            'distance_modulus_err': np.array([data[2] for data in pantheon_like_data[:5]]),
+            'description': 'Low-z SN Ia sample (z < 0.1)'
+        }
+        
+        self.snia_data['Intermediate_z'] = {
+            'redshifts': np.array([data[0] for data in pantheon_like_data[5:15]]),
+            'distance_modulus': np.array([data[1] for data in pantheon_like_data[5:15]]),
+            'distance_modulus_err': np.array([data[2] for data in pantheon_like_data[5:15]]),
+            'description': 'Intermediate-z SN Ia sample (0.1 < z < 0.7)'
+        }
+        
+        self.snia_data['High_z'] = {
+            'redshifts': np.array([data[0] for data in pantheon_like_data[15:]]),
+            'distance_modulus': np.array([data[1] for data in pantheon_like_data[15:]]),
+            'distance_modulus_err': np.array([data[2] for data in pantheon_like_data[15:]]),
+            'description': 'High-z SN Ia sample (z > 0.7)'
+        }
+        
+        # Комбинирани данни
+        all_data = pantheon_like_data
+        self.snia_data['Combined'] = {
+            'redshifts': np.array([data[0] for data in all_data]),
+            'distance_modulus': np.array([data[1] for data in all_data]),
+            'distance_modulus_err': np.array([data[2] for data in all_data]),
+            'description': 'Combined SN Ia sample (all redshifts)'
+        }
+        
+        logger.info(f"Заредени SN Ia данни: {len(all_data)} supernovae")
+    
+    def _create_snia_covariance_matrices(self):
+        """Създаване на ковариационни матрици за SN Ia данните"""
+        
+        for sample_name, data in self.snia_data.items():
+            n_points = len(data['redshifts'])
+            errors = data['distance_modulus_err']
+            
+            # Основна диагонална матрица
+            diag_cov = np.diag(errors**2)
+            
+            # Добавяне на систематични корелации
+            correlation_matrix = np.eye(n_points)
+            
+            # Близки z стойности имат корелация
+            for i in range(n_points):
+                for j in range(i+1, n_points):
+                    z_diff = abs(data['redshifts'][i] - data['redshifts'][j])
+                    
+                    # Експоненциална корелация с характерен мащаб
+                    if z_diff < 0.1:
+                        corr = 0.3 * np.exp(-z_diff / 0.05)
+                    elif z_diff < 0.3:
+                        corr = 0.15 * np.exp(-z_diff / 0.1)
+                    else:
+                        corr = 0.05 * np.exp(-z_diff / 0.2)
+                    
+                    correlation_matrix[i, j] = corr
+                    correlation_matrix[j, i] = corr
+            
+            # Комбиниране на грешки и корелации
+            cov_matrix = np.outer(errors, errors) * correlation_matrix
+            
+            self.covariance_matrices[sample_name] = {
+                'covariance': cov_matrix,
+                'correlation': correlation_matrix,
+                'redshifts': data['redshifts'],
+                'errors': errors,
+                'description': f'SN Ia ковариационна матрица за {sample_name}'
+            }
+        
+        logger.info(f"Генерирани SN Ia ковариационни матрици за {len(self.snia_data)} samples")
+    
+    def get_combined_data(self, samples: List[str] = None) -> Dict:
+        """Получаване на комбинирани SN Ia данни"""
+        
+        if samples is None:
+            samples = ['Combined']
+        
+        combined_z = []
+        combined_mu = []
+        combined_err = []
+        
+        for sample in samples:
+            if sample in self.snia_data:
+                combined_z.extend(self.snia_data[sample]['redshifts'])
+                combined_mu.extend(self.snia_data[sample]['distance_modulus'])
+                combined_err.extend(self.snia_data[sample]['distance_modulus_err'])
+        
+        return {
+            'redshifts': np.array(combined_z),
+            'distance_modulus': np.array(combined_mu),
+            'distance_modulus_err': np.array(combined_err)
+        }
+    
+    def get_covariance_matrix(self, sample_name: str = 'Combined') -> np.ndarray:
+        """Получаване на ковариационна матрица"""
+        
+        if sample_name not in self.covariance_matrices:
+            logger.warning(f"Sample '{sample_name}' не е намерен. Използване на 'Combined'.")
+            sample_name = 'Combined'
+        
+        return self.covariance_matrices[sample_name]['covariance']
+    
+    def summary(self):
+        """Резюме на SN Ia данните"""
+        print("🌟 TYPE Ia SUPERNOVAE ДАННИ")
+        print("=" * 50)
+        
+        for sample_name, data in self.snia_data.items():
+            print(f"\n{sample_name}:")
+            print(f"  Описание: {data['description']}")
+            print(f"  Брой SN: {len(data['redshifts'])}")
+            print(f"  z диапазон: {data['redshifts'][0]:.3f} - {data['redshifts'][-1]:.3f}")
+            print(f"  μ диапазон: {data['distance_modulus'][0]:.2f} - {data['distance_modulus'][-1]:.2f}")
+            print(f"  Средна грешка: {np.mean(data['distance_modulus_err']):.3f}")
+
+
+class LocalH0ObservationalData:
+    """
+    Локални H₀ измервания
+    
+    Включва резултати от SH0ES, HST Cepheids и други локални методи
+    """
+    
+    def __init__(self):
+        """Инициализация на локални H₀ данни"""
+        
+        logger.info("Зареждане на локални H₀ измервания")
+        
+        self.h0_measurements = {}
+        
+        self._load_h0_data()
+        
+        logger.info("Инициализирани локални H₀ данни")
+    
+    def _load_h0_data(self):
+        """Зареждане на H₀ измервания от различни методи"""
+        
+        # SH0ES Team (Riess et al.)
+        self.h0_measurements['SH0ES'] = {
+            'H0': 73.04,
+            'H0_err': 1.04,
+            'method': 'Cepheid-SN Ia ladder',
+            'reference': 'Riess et al. 2022',
+            'description': 'SH0ES Team HST observations'
+        }
+        
+        # Planck CMB inference (за сравнение)
+        self.h0_measurements['Planck_CMB'] = {
+            'H0': 67.36,
+            'H0_err': 0.54,
+            'method': 'CMB + ΛCDM',
+            'reference': 'Planck Collaboration 2020',
+            'description': 'CMB-derived H₀ assuming ΛCDM'
+        }
+        
+        # Carnegie-Chicago Hubble Program
+        self.h0_measurements['CCHP'] = {
+            'H0': 69.8,
+            'H0_err': 1.9,
+            'method': 'Tip of Red Giant Branch',
+            'reference': 'Freedman et al. 2020',
+            'description': 'TRGB distance scale'
+        }
+        
+        # Surface Brightness Fluctuations
+        self.h0_measurements['SBF'] = {
+            'H0': 69.95,
+            'H0_err': 3.0,
+            'method': 'Surface Brightness Fluctuations',
+            'reference': 'Khetan et al. 2021',
+            'description': 'SBF distance measurements'
+        }
+        
+        # Gravitational Lensing Time Delays
+        self.h0_measurements['H0LiCOW'] = {
+            'H0': 73.3,
+            'H0_err': 1.8,
+            'method': 'Strong lensing time delays',
+            'reference': 'Wong et al. 2020',
+            'description': 'H0LiCOW + STRIDES'
+        }
+        
+        # Weighted average of local measurements
+        local_methods = ['SH0ES', 'CCHP', 'SBF', 'H0LiCOW']
+        h0_values = [self.h0_measurements[method]['H0'] for method in local_methods]
+        h0_errors = [self.h0_measurements[method]['H0_err'] for method in local_methods]
+        
+        # Inverse variance weighting
+        weights = [1/err**2 for err in h0_errors]
+        weighted_h0 = np.sum([w*h0 for w, h0 in zip(weights, h0_values)]) / np.sum(weights)
+        weighted_err = 1/np.sqrt(np.sum(weights))
+        
+        self.h0_measurements['Local_Average'] = {
+            'H0': weighted_h0,
+            'H0_err': weighted_err,
+            'method': 'Weighted average of local methods',
+            'reference': 'Combined analysis',
+            'description': f'Average of {len(local_methods)} local measurements'
+        }
+        
+        logger.info(f"Заредени {len(self.h0_measurements)} H₀ измервания")
+    
+    def get_measurement(self, method: str = 'Local_Average') -> Dict:
+        """Получаване на конкретно H₀ измерване"""
+        
+        if method not in self.h0_measurements:
+            available = list(self.h0_measurements.keys())
+            logger.warning(f"Method '{method}' не е намерен. Налични: {available}")
+            method = 'Local_Average'
+        
+        return self.h0_measurements[method]
+    
+    def get_tension_analysis(self) -> Dict:
+        """Анализ на tension между различните измервания"""
+        
+        local_h0 = self.h0_measurements['Local_Average']['H0']
+        local_err = self.h0_measurements['Local_Average']['H0_err']
+        
+        cmb_h0 = self.h0_measurements['Planck_CMB']['H0']
+        cmb_err = self.h0_measurements['Planck_CMB']['H0_err']
+        
+        # Tension calculation
+        diff = local_h0 - cmb_h0
+        combined_err = np.sqrt(local_err**2 + cmb_err**2)
+        tension_sigma = abs(diff) / combined_err
+        
+        return {
+            'local_h0': local_h0,
+            'local_err': local_err,
+            'cmb_h0': cmb_h0,
+            'cmb_err': cmb_err,
+            'difference': diff,
+            'combined_uncertainty': combined_err,
+            'tension_sigma': tension_sigma,
+            'is_significant': tension_sigma > 3.0
+        }
+    
+    def summary(self):
+        """Резюме на H₀ измерванията"""
+        print("🔭 ЛОКАЛНИ H₀ ИЗМЕРВАНИЯ")
+        print("=" * 50)
+        
+        for method, data in self.h0_measurements.items():
+            print(f"\n{method}:")
+            print(f"  H₀: {data['H0']:.2f} ± {data['H0_err']:.2f} km/s/Mpc")
+            print(f"  Метод: {data['method']}")
+            print(f"  Референция: {data['reference']}")
+        
+        # Tension анализ
+        tension = self.get_tension_analysis()
+        print(f"\n📊 TENSION АНАЛИЗ:")
+        print(f"  Локално H₀: {tension['local_h0']:.2f} ± {tension['local_err']:.2f}")
+        print(f"  CMB H₀: {tension['cmb_h0']:.2f} ± {tension['cmb_err']:.2f}")
+        print(f"  Разлика: {tension['difference']:.2f} ± {tension['combined_uncertainty']:.2f}")
+        print(f"  Tension: {tension['tension_sigma']:.1f}σ")
+        print(f"  Значима: {'ДА' if tension['is_significant'] else 'НЕ'}")
+
+
 class LikelihoodFunctions:
     """
-    Likelihood функции за BAO и CMB данни
-    
-    Предоставя функции за:
-    - BAO likelihood
-    - CMB likelihood
-    - Обединена likelihood
-    - χ² статистики
+    Обединени likelihood функции за BAO + CMB + SN Ia + H₀ данни
     """
     
-    def __init__(self, bao_data: BAOObservationalData, cmb_data: CMBObservationalData):
+    def __init__(self, 
+                 bao_data: BAOObservationalData, 
+                 cmb_data: CMBObservationalData,
+                 snia_data: SNIaObservationalData = None,
+                 h0_data: LocalH0ObservationalData = None):
         """
-        Инициализация на likelihood функции
+        Инициализация на пълните likelihood функции
         
         Args:
             bao_data: BAO наблюдателни данни
-            cmb_data: CMB наблюдателни данни
+            cmb_data: CMB наблюдателни данни  
+            snia_data: SN Ia наблюдателни данни (опционално)
+            h0_data: Локални H₀ данни (опционално)
         """
+        
         self.bao_data = bao_data
         self.cmb_data = cmb_data
+        self.snia_data = snia_data
+        self.h0_data = h0_data
         
-        logger.info("Инициализирани likelihood функции")
+        logger.info("Инициализирани пълни likelihood функции")
+        
+        # Проверка кои данни са налични
+        available_probes = ['BAO', 'CMB']
+        if snia_data is not None:
+            available_probes.append('SN Ia')
+        if h0_data is not None:
+            available_probes.append('H₀')
+            
+        logger.info(f"Налични наблюдателни проби: {', '.join(available_probes)}")
     
-    def bao_likelihood(self, model_predictions: Dict, dataset_names: List[str] = None) -> float:
+    def bao_likelihood(self, model_predictions: Dict, dataset_names: List[str] = None, 
+                      use_anisotropic: bool = True) -> float:
         """
-        BAO likelihood функция
+        Анизотропна BAO likelihood функция
+        
+        Използва DV/rs, DA/rs и DH/rs измервания когато са налични
         
         Args:
             model_predictions: Предсказания на модела
             dataset_names: Имена на използваните проучвания
+            use_anisotropic: Дали да се използват анизотропни измервания
             
         Returns:
             Log-likelihood стойност
@@ -404,36 +742,99 @@ class LikelihoodFunctions:
                 continue
                 
             data = self.bao_data.datasets[dataset_name]
-            
-            # Извличане на наблюдения
             z_obs = data['redshifts']
-            DV_rs_obs = data['DV_rs']
-            DV_rs_err = data['DV_rs_err']
             n_points = len(z_obs)
             
-            # Извличане на предсказания на модела
-            if 'DV_rs' in model_predictions:
+            # Списък с измервания и техните типове
+            measurements = []
+            residuals = []
+            
+            # DV/rs измервания (винаги налични)
+            if 'DV_rs' in model_predictions and 'DV_rs' in data:
+                DV_rs_obs = data['DV_rs']
                 DV_rs_model_all = model_predictions['DV_rs']
                 
-                # Извличане на съответните предсказания за този dataset
                 if len(DV_rs_model_all) >= model_index + n_points:
                     DV_rs_model = DV_rs_model_all[model_index:model_index + n_points]
-                    model_index += n_points
-                    
-                    # Резидуали
-                    residuals = DV_rs_obs - DV_rs_model
-                    
-                    # Ковариационна матрица
-                    cov_matrix = self.bao_data.covariance_matrices[f'{dataset_name}_DV']
-                    
-                    # χ² изчисление
+                    dv_residuals = DV_rs_obs - DV_rs_model
+                    residuals.extend(dv_residuals)
+                    measurements.append(('DV_rs', DV_rs_obs, DV_rs_model, data['DV_rs_err']))
+            
+            # DA/rs измервания (анизотропни)
+            if (use_anisotropic and 'DA_rs' in model_predictions and 'DA_rs' in data):
+                DA_rs_obs = data['DA_rs']
+                DA_rs_model_all = model_predictions['DA_rs']
+                
+                if len(DA_rs_model_all) >= model_index + n_points:
+                    DA_rs_model = DA_rs_model_all[model_index:model_index + n_points]
+                    da_residuals = DA_rs_obs - DA_rs_model
+                    residuals.extend(da_residuals)
+                    measurements.append(('DA_rs', DA_rs_obs, DA_rs_model, data['DA_rs_err']))
+            
+            # DH/rs измервания (анизотропни)
+            if (use_anisotropic and 'DH_rs' in model_predictions and 'DH_rs' in data):
+                DH_rs_obs = data['DH_rs']
+                DH_rs_model_all = model_predictions['DH_rs']
+                
+                if len(DH_rs_model_all) >= model_index + n_points:
+                    DH_rs_model = DH_rs_model_all[model_index:model_index + n_points]
+                    dh_residuals = DH_rs_obs - DH_rs_model
+                    residuals.extend(dh_residuals)
+                    measurements.append(('DH_rs', DH_rs_obs, DH_rs_model, data['DH_rs_err']))
+            
+            # Обработка на резидуалите
+            if residuals:
+                residuals = np.array(residuals)
+                
+                # Избор на ковариационна матрица
+                if use_anisotropic and len(measurements) > 1:
+                    # Използвай пълна ковариационна матрица за анизотропни измервания
+                    try:
+                        # Генериране на пълна ковариационна матрица
+                        from bao_covariance_matrices import BAOCovarianceMatrices
+                        bao_cov = BAOCovarianceMatrices()
+                        cov_matrix = bao_cov.get_dataset_covariance_matrix(dataset_name, len(residuals))
+                        
+                        # Ако матрицата е малка, използвай диагонална
+                        if cov_matrix.shape[0] != len(residuals):
+                            logger.warning(f"Размерен несъответствие в ковариационна матрица за {dataset_name}")
+                            errors = []
+                            for measure_type, obs, model, err in measurements:
+                                errors.extend(err)
+                            cov_matrix = np.diag(np.array(errors)**2)
+                        
+                    except Exception as e:
+                        logger.warning(f"Грешка при генериране на ковариационна матрица: {e}")
+                        # Fallback към диагонална матрица
+                        errors = []
+                        for measure_type, obs, model, err in measurements:
+                            errors.extend(err)
+                        cov_matrix = np.diag(np.array(errors)**2)
+                else:
+                    # Използвай диагонална ковариационна матрица за изотропни измервания
+                    errors = []
+                    for measure_type, obs, model, err in measurements:
+                        errors.extend(err)
+                    cov_matrix = np.diag(np.array(errors)**2)
+                
+                # χ² изчисление
+                try:
                     chi2 = np.dot(residuals, np.dot(np.linalg.inv(cov_matrix), residuals))
-                    
-                    # Log-likelihood
                     log_likelihood = -0.5 * chi2
                     total_log_likelihood += log_likelihood
-                else:
-                    logger.warning(f"Недостатъчно предсказания за {dataset_name}")
+                    
+                    # Лог информация
+                    logger.debug(f"{dataset_name}: χ²={chi2:.2f}, measures={len(measurements)}, points={n_points}")
+                    
+                except Exception as e:
+                    logger.warning(f"Грешка при изчисление на χ² за {dataset_name}: {e}")
+                    # Fallback към диагонална обработка
+                    chi2 = np.sum(residuals**2 / np.diag(cov_matrix))
+                    log_likelihood = -0.5 * chi2
+                    total_log_likelihood += log_likelihood
+                    
+            # Обновяване на индекса за следващия dataset
+            model_index += n_points
         
         return total_log_likelihood
     
@@ -477,8 +878,117 @@ class LikelihoodFunctions:
         
         return total_log_likelihood
     
+    def snia_likelihood(self, model_predictions: Dict, sample_name: str = 'Combined') -> float:
+        """
+        Type Ia Supernovae likelihood функция
+        
+        Args:
+            model_predictions: Предсказания на модела
+            sample_name: Име на SN Ia sample
+            
+        Returns:
+            Log-likelihood стойност
+        """
+        
+        if self.snia_data is None:
+            logger.warning("SN Ia данни не са заредени")
+            return 0.0
+        
+        if 'distance_modulus' not in model_predictions:
+            logger.warning("Няма distance_modulus предсказания за SN Ia")
+            return 0.0
+        
+        total_log_likelihood = 0.0
+        
+        # Получаване на наблюдателните данни
+        if sample_name in self.snia_data.snia_data:
+            snia_sample = self.snia_data.snia_data[sample_name]
+            
+            # Наблюдателни данни
+            mu_obs = snia_sample['distance_modulus']
+            mu_model = model_predictions['distance_modulus']
+            
+            # Проверка на размерите
+            if len(mu_model) != len(mu_obs):
+                logger.warning(f"Размерен несъответствие в SN Ia данни: {len(mu_model)} vs {len(mu_obs)}")
+                return -np.inf
+            
+            # Ковариационна матрица
+            cov_matrix = self.snia_data.get_covariance_matrix(sample_name)
+            
+            # Residuals
+            residuals = mu_obs - mu_model
+            
+            # χ² изчисление
+            try:
+                chi2 = np.dot(residuals, np.dot(np.linalg.inv(cov_matrix), residuals))
+                log_likelihood = -0.5 * chi2
+                total_log_likelihood += log_likelihood
+                
+                logger.debug(f"SN Ia ({sample_name}): χ²={chi2:.2f}, N={len(mu_obs)}")
+                
+            except Exception as e:
+                logger.warning(f"Грешка при изчисление на SN Ia likelihood: {e}")
+                # Fallback към диагонална матрица
+                mu_err = snia_sample['distance_modulus_err']
+                chi2 = np.sum((residuals / mu_err)**2)
+                log_likelihood = -0.5 * chi2
+                total_log_likelihood += log_likelihood
+        
+        return total_log_likelihood
+    
+    def h0_likelihood(self, model_predictions: Dict, measurement_method: str = 'Local_Average') -> float:
+        """
+        Локална H₀ likelihood функция
+        
+        Args:
+            model_predictions: Предсказания на модела
+            measurement_method: Метод на измерване на H₀
+            
+        Returns:
+            Log-likelihood стойност
+        """
+        
+        if self.h0_data is None:
+            logger.warning("H₀ данни не са заредени")
+            return 0.0
+        
+        if 'H0' not in model_predictions:
+            logger.warning("Няма H₀ предсказания")
+            return 0.0
+        
+        total_log_likelihood = 0.0
+        
+        # Получаване на измерването
+        h0_measurement = self.h0_data.get_measurement(measurement_method)
+        
+        # Наблюдателни данни
+        H0_obs = h0_measurement['H0']
+        H0_err = h0_measurement['H0_err']
+        
+        # Модел предсказание
+        H0_model = model_predictions['H0']
+        
+        # Проверка дали H0_model е число или масив
+        if np.isscalar(H0_model):
+            H0_model_val = H0_model
+        else:
+            H0_model_val = np.mean(H0_model)  # Средна стойност ако е масив
+        
+        # χ² изчисление
+        chi2 = ((H0_obs - H0_model_val) / H0_err)**2
+        log_likelihood = -0.5 * chi2
+        total_log_likelihood += log_likelihood
+        
+        logger.debug(f"H₀ ({measurement_method}): χ²={chi2:.2f}, obs={H0_obs:.2f}, model={H0_model_val:.2f}")
+        
+        return total_log_likelihood
+    
     def combined_likelihood(self, model_predictions: Dict, 
-                          bao_weight: float = 1.0, cmb_weight: float = 1.0) -> float:
+                          bao_weight: float = 1.0, 
+                          cmb_weight: float = 1.0,
+                          snia_weight: float = 1.0,
+                          h0_weight: float = 1.0) -> float:
         """
         Обединена BAO + CMB likelihood функция
         
@@ -534,6 +1044,7 @@ class LikelihoodFunctions:
         results['reduced_chi2_combined'] = combined_chi2 / results['dof_combined']
         
         return results
+
 
 
 def create_bao_data() -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:

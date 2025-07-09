@@ -49,97 +49,123 @@ class OptimizedNestedSampling:
     def __init__(self, 
                  parameter_names: List[str] = None,
                  parameter_ranges: Dict[str, Tuple[float, float]] = None,
-                 nlive: int = 100):  # По-малко за скорост
+                 nlive: int = 100,  # По-малко за скорост
+                 use_snia: bool = False,  # Опция за SN Ia данни
+                 use_h0: bool = False):   # Опция за H₀ данни
         """
-        Инициализация с оптимизации за скорост
+        Инициализация на оптимизирания nested sampling
+        
+        Args:
+            parameter_names: Имена на параметрите
+            parameter_ranges: Диапазони на параметрите
+            nlive: Брой live points
+            use_snia: Дали да се включат SN Ia данни
+            use_h0: Дали да се включат H₀ данни
         """
         
-        # Зареждане на данни ВЕДНЪЖ
-        self.bao_data = BAOObservationalData()
-        self.cmb_data = CMBObservationalData()
-        self.likelihood_func = LikelihoodFunctions(self.bao_data, self.cmb_data)
+        # Конфигурация на данните
+        self.use_snia = use_snia
+        self.use_h0 = use_h0
         
-        # Параметри
+        # Настройка на параметрите
         if parameter_names is None:
-            parameter_names = ['H0', 'Omega_m', 'epsilon_bao', 'epsilon_cmb']  # 🚨 ПОПРАВКА: Добавен epsilon_cmb
+            parameter_names = ['H0', 'Omega_m', 'epsilon_bao', 'epsilon_cmb']
         
-        self.parameter_names = parameter_names
-        self.n_params = len(parameter_names)
-        
-        # Оптимизирани диапазони
         if parameter_ranges is None:
             parameter_ranges = {
-                'H0': (65.0, 75.0),      # По-тесен диапазон
-                'Omega_m': (0.25, 0.35), # По-тесен диапазон
-                'epsilon_bao': (0.0, 0.05),
-                'epsilon_cmb': (0.0, 0.05)  # 🚨 ПОПРАВКА: Добавен epsilon_cmb range
+                'H0': (60.0, 80.0),
+                'Omega_m': (0.05, 0.95),
+                'epsilon_bao': (-0.1, 0.1),
+                'epsilon_cmb': (-0.1, 0.1)
             }
         
+        self.parameter_names = parameter_names
         self.parameter_ranges = parameter_ranges
-        
-        # Nested sampling настройки за скорост
+        self.n_params = len(parameter_names)
         self.nlive = nlive
-        self.dlogz = 0.5  # По-груба точност за скорост
-        self.maxiter = 1000  # Ограничение
         
-        # Кеширани константи
-        self._setup_cached_data()
+        # Кеширани данни
+        self.cached_n_bao = 0
+        self.cached_n_cmb = 0
+        self.cached_n_snia = 0
+        self.cached_n_h0 = 0
         
         # Резултати
-        self.sampler = None
         self.results = None
+        self.sampler = None
+        self.log_evidence = None
+        self.log_evidence_err = None
+        self.posterior_samples = None
+        self.param_stats = {}
         
-        print(f"✅ Инициализиран оптимизиран nested sampling: {self.n_params} параметра, nlive={nlive}")
+        # Настройка на данните
+        self._setup_cached_data()
+        
+        logger.info(f"Настроен nested sampling с {self.n_params} параметра")
+        
+        # Изброй на активните данни
+        active_data = ['BAO', 'CMB']
+        if self.use_snia:
+            active_data.append('SN Ia')
+        if self.use_h0:
+            active_data.append('H₀')
+        
+        logger.info(f"Активни данни: {', '.join(active_data)}")
     
     def _setup_cached_data(self):
-        """Предварително кеширане на данни за скорост"""
+        """
+        Настройка на кешираните данни за максимална скорост
+        """
+        logger.info("Настройка на кешираните данни...")
         
-        # 🚨 ПОПРАВКА: Използване на новата create_bao_data функция с пълни ковариационни матрици
-        from observational_data import create_bao_data
+        # Основни данни (BAO + CMB)
+        from observational_data import (
+            BAOObservationalData, 
+            CMBObservationalData,
+            SNIaObservationalData,
+            LocalH0ObservationalData,
+            LikelihoodFunctions
+        )
         
-        try:
-            z_bao, DV_rs_obs, DV_rs_err, covariance_matrix = create_bao_data()
-            
-            self.cached_z_bao = z_bao
-            self.cached_DV_rs_obs = DV_rs_obs
-            self.cached_DV_rs_err = DV_rs_err
-            self.cached_n_bao = len(z_bao)
-            
-            # Ковариационна матрица за BAO
-            if covariance_matrix is not None:
-                self.cached_bao_cov_inv = np.linalg.inv(covariance_matrix)
-                self.use_full_bao_covariance = True
-                print("✅ Използване на пълна BAO ковариационна матрица")
-            else:
-                self.cached_bao_cov_inv = None
-                self.use_full_bao_covariance = False
-                print("⚠️ Използване на диагонална BAO ковариационна матрица")
-                
-        except Exception as e:
-            print(f"⚠️ Грешка при зареждане на BAO данни: {e}")
-            # Fallback към старите данни
-            bao_combined = self.bao_data.get_combined_data()
-            self.cached_z_bao = bao_combined['redshifts']
-            self.cached_DV_rs_obs = bao_combined['DV_rs']
-            self.cached_DV_rs_err = bao_combined['DV_rs_err']
-            self.cached_n_bao = len(self.cached_z_bao)
-            self.cached_bao_cov_inv = None
-            self.use_full_bao_covariance = False
+        # Зареждане на BAO и CMB данни
+        self.bao_data = BAOObservationalData()
+        self.cmb_data = CMBObservationalData()
         
-        # Кеширане на CMB данни
-        peak_data = self.cmb_data.get_peak_positions()
-        acoustic_data = self.cmb_data.get_acoustic_scale()
+        # Опционално зареждане на SN Ia данни
+        if self.use_snia:
+            logger.info("Зареждане на SN Ia данни...")
+            self.snia_data = SNIaObservationalData()
+            self.cached_n_snia = len(self.snia_data.get_combined_data()['redshifts'])
+            logger.info(f"Заредени {self.cached_n_snia} SN Ia supernovae")
+        else:
+            self.snia_data = None
         
-        self.cached_l_peaks_obs = peak_data['l_peaks']
-        self.cached_l_peaks_cov_inv = np.linalg.inv(peak_data['covariance'])
+        # Опционално зареждане на H₀ данни
+        if self.use_h0:
+            logger.info("Зареждане на H₀ данни...")
+            self.h0_data = LocalH0ObservationalData()
+            self.cached_n_h0 = len(self.h0_data.h0_measurements)
+            logger.info(f"Заредени {self.cached_n_h0} H₀ измервания")
+        else:
+            self.h0_data = None
         
-        self.cached_theta_s_obs = acoustic_data['theta_s']
-        self.cached_theta_s_err = acoustic_data['theta_s_err']
+        # Създаване на пълната likelihood функция
+        self.likelihood_func = LikelihoodFunctions(
+            bao_data=self.bao_data,
+            cmb_data=self.cmb_data,
+            snia_data=self.snia_data,
+            h0_data=self.h0_data
+        )
         
-        # Предизчислени константи
-        self.cached_theta_s_var_inv = 1.0 / (self.cached_theta_s_err**2)
+        # Кеширане на размерите
+        self.cached_n_bao = len(self.bao_data.get_combined_data()['redshifts'])
+        self.cached_n_cmb = 4  # theta_s + 3 peaks
         
-        print("✅ Кеширани данни за оптимизация")
+        # Общ брой данни
+        total_data_points = self.cached_n_bao + self.cached_n_cmb + self.cached_n_snia + self.cached_n_h0
+        logger.info(f"Общо данни: {total_data_points} (BAO: {self.cached_n_bao}, CMB: {self.cached_n_cmb}, SN Ia: {self.cached_n_snia}, H₀: {self.cached_n_h0})")
+        
+        logger.info("Данните са настроени и кеширани!")
     
     def ptform(self, u: np.ndarray) -> np.ndarray:
         """Оптимизиран prior transform"""
@@ -152,7 +178,7 @@ class OptimizedNestedSampling:
         return x
     
     def loglike(self, params: np.ndarray) -> float:
-        """ПОПРАВЕН likelihood функция с No-Lambda модел"""
+        """ПЪЛЕН Cross-validation likelihood функция с BAO + CMB + SN Ia + H₀"""
         try:
             H0 = params[0]
             Omega_m = params[1]
@@ -163,7 +189,7 @@ class OptimizedNestedSampling:
             if not (60 < H0 < 80 and 0.05 < Omega_m < 0.95):
                 return -np.inf
 
-            # 🚨 ПОПРАВКА: Използваме пълния No-Lambda модел с поправките
+            # 🚨 ПОПРАВКА: Използваме анизотропен No-Lambda модел
             try:
                 from no_lambda_cosmology import NoLambdaCosmology
                 
@@ -171,51 +197,91 @@ class OptimizedNestedSampling:
                     H0=H0,
                     Omega_m=Omega_m,
                     epsilon_bao=epsilon_bao,
-                    epsilon_cmb=epsilon_cmb
+                    epsilon_cmb=epsilon_cmb,
+                    alpha=1.2,
+                    beta=0.0,
+                    gamma=0.4,
+                    delta=0.08,
+                    angular_strength=0.6
                 )
                 
-                # BAO изчисления с поправения модел и пълни ковариационни матрици
-                DV_rs_model = []
-                for z in self.cached_z_bao:
-                    # Използваме поправените функции
-                    D_A = cosmo.angular_diameter_distance(z)
-                    H_z = cosmo.hubble_function(z)
-                    D_H = C_KM_S / H_z
-                    D_V = (z * D_A**2 * D_H)**(1/3.0)
-                    r_s = cosmo.sound_horizon_scale()
+                # BAO предсказания (анизотропни)
+                bao_combined = self.bao_data.get_combined_data()
+                z_bao = bao_combined['redshifts']
+                
+                # Генериране на анизотропни BAO предсказания
+                bao_predictions = cosmo.calculate_bao_predictions(z_bao)
+                
+                # CMB предсказания
+                theta_s_pred = cosmo.cmb_angular_scale()
+                l_peaks_pred = np.array([
+                    cosmo.cmb_peak_position(),
+                    cosmo.cmb_peak_position() * 1.4,
+                    cosmo.cmb_peak_position() * 2.1
+                ])
+                
+                cmb_predictions = {
+                    'theta_s': theta_s_pred,
+                    'l_peaks': l_peaks_pred
+                }
+                
+                # SN Ia предсказания (ако са налични)
+                snia_predictions = {}
+                if hasattr(self, 'snia_data') and self.snia_data is not None:
+                    snia_combined = self.snia_data.get_combined_data()
+                    z_snia = snia_combined['redshifts']
                     
-                    DV_rs_model.append(D_V / r_s)
+                    # Distance modulus предсказания
+                    mu_pred = cosmo.distance_modulus(z_snia)
+                    snia_predictions['distance_modulus'] = mu_pred
                 
-                DV_rs_model = np.array(DV_rs_model)
-                residuals_bao = self.cached_DV_rs_obs - DV_rs_model
+                # H₀ предсказания (ако са налични)
+                h0_predictions = {}
+                if hasattr(self, 'h0_data') and self.h0_data is not None:
+                    h0_pred = cosmo.h0_prediction()
+                    h0_predictions['H0'] = h0_pred['H0']
                 
-                # Chi-squared изчисление с опция за пълна ковариационна матрица
-                if self.use_full_bao_covariance and self.cached_bao_cov_inv is not None:
-                    # Използване на пълна ковариационна матрица
-                    chi2_bao = residuals_bao.T @ self.cached_bao_cov_inv @ residuals_bao
-                else:
-                    # Диагонална ковариационна матрица (стандартен подход)
-                    chi2_bao = np.sum((residuals_bao / self.cached_DV_rs_err)**2)
+                # Обединени предсказания
+                combined_predictions = {
+                    **bao_predictions,
+                    **cmb_predictions,
+                    **snia_predictions,
+                    **h0_predictions
+                }
                 
-                # 🚨 ПОПРАВКА: CMB с правилния angular_diameter_distance
-                theta_s_model = cosmo.cmb_angular_scale()  # Използваме поправената функция
-                residual_cmb = self.cached_theta_s_obs - theta_s_model
-                chi2_cmb = (residual_cmb / self.cached_theta_s_err)**2
-
-                # Обща chi2
-                total_chi2 = chi2_bao + chi2_cmb
+                # Пълен likelihood от всички данни
+                total_loglike = 0.0
                 
-                # Проверка за NaN/inf
-                if not np.isfinite(total_chi2):
+                # BAO likelihood
+                bao_loglike = self.likelihood_func.bao_likelihood(combined_predictions, use_anisotropic=True)
+                total_loglike += bao_loglike
+                
+                # CMB likelihood
+                cmb_loglike = self.likelihood_func.cmb_likelihood(combined_predictions)
+                total_loglike += cmb_loglike
+                
+                # SN Ia likelihood (ако е налично)
+                if hasattr(self, 'snia_data') and self.snia_data is not None:
+                    snia_loglike = self.likelihood_func.snia_likelihood(combined_predictions)
+                    total_loglike += snia_loglike
+                
+                # H₀ likelihood (ако е налично)
+                if hasattr(self, 'h0_data') and self.h0_data is not None:
+                    h0_loglike = self.likelihood_func.h0_likelihood(combined_predictions)
+                    total_loglike += h0_loglike
+                
+                # Проверка за валидност
+                if np.isnan(total_loglike) or np.isinf(total_loglike):
                     return -np.inf
-                    
-                return -0.5 * total_chi2
+                
+                return total_loglike
                 
             except Exception as e:
-                # При грешка в космологията, върни -inf
+                logger.warning(f"Грешка в космологическия модел: {e}")
                 return -np.inf
-            
-        except Exception:
+                
+        except Exception as e:
+            logger.warning(f"Грешка в likelihood функцията: {e}")
             return -np.inf
     
     def run_fast_sampling(self, 
@@ -303,7 +369,7 @@ class OptimizedNestedSampling:
             }
         
         # Information criteria
-        n_data = self.cached_n_bao + 4  # BAO + CMB приблизително
+        n_data = self.cached_n_bao + self.cached_n_cmb + self.cached_n_snia + self.cached_n_h0
         best_log_like = np.max(self.results.logl)
         
         self.info_criteria = {
