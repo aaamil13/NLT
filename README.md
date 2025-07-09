@@ -179,3 +179,14 @@ python analysis/example_acs_transformation.py
 **Версия**: 1.0.0  
 **Дата**: 2024-2025  
 **Статус**: Завършен 
+
+
+## License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+
+You may use, modify, and share this work non-commercially, as long as you provide attribution and apply the same license to derivative works.
+
+© [Milen Krumov], [2025]
+
+For commercial licensing requests, contact [krumov.milen@gmail.com].
