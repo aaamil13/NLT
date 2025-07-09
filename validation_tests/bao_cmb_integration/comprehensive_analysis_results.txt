@@ -1,0 +1,27 @@
+NO-Λ COSMOLOGY COMPREHENSIVE ANALYSIS RESULTS
+==================================================
+
+PARAMETER CONSTRAINTS:
+-------------------------
+H0: 72.7975 +5.4988 -9.1935
+Omega_m: 0.3009 +0.0693 -0.0658
+epsilon_bao: 0.0445 +0.0380 -0.0361
+epsilon_cmb: 0.0218 +0.0185 -0.0174
+
+MODEL COMPARISON:
+-----------------
+No-Λ log-evidence: -1383.975 ± 0.308
+Log Bayes Factor: 9111.025
+Interpretation: Решителен
+Preferred model: No-Λ
+
+STATISTICAL TESTS:
+------------------
+χ²: 2734.6
+Reduced χ²: 273.462
+DOF: 10
+P-value: 0.0000
+Goodness-of-fit: Лош
+
+RUNTIME: 337.4 seconds
+ANALYSIS TIMESTAMP: 2025-07-09 21:43:45

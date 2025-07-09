@@ -1,0 +1,17 @@
+CHI-SQUARED DEBUG SUMMARY
+==============================
+
+BEST-FIT PARAMETERS:
+H0: 69.123700
+Omega_m: 0.323300
+epsilon_bao: 0.049700
+epsilon_cmb: 0.025600
+
+CHI-SQUARED BREAKDOWN:
+BAO χ²: 19972.353
+CMB χ²: 2653993647.011
+Total χ²: 2654013619.364
+
+KEY QUANTITIES:
+Sound horizon: 1966.151 Mpc
+CMB theta_s: 0.170112
