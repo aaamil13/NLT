@@ -141,6 +141,90 @@ class BAOCovarianceMatrices:
         
         logger.info(f"Комбинирана ковариационна матрица: {n_all}x{n_all}")
     
+    def get_full_covariance_matrix(self, survey_name: str = 'Combined') -> np.ndarray:
+        """
+        Получаване на пълната ковариационна матрица за даден survey
+        
+        Args:
+            survey_name: Име на проучването ('Combined', 'BOSS_DR12', 'eBOSS_DR16')
+            
+        Returns:
+            Пълната ковариационна матрица
+        """
+        
+        if survey_name not in self.covariance_matrices:
+            logger.warning(f"Survey '{survey_name}' не е намерен. Използване на 'Combined'.")
+            survey_name = 'Combined'
+        
+        return self.covariance_matrices[survey_name]['covariance']
+    
+    def get_redshifts(self, survey_name: str = 'Combined') -> np.ndarray:
+        """
+        Получаване на redshift стойностите за даден survey
+        
+        Args:
+            survey_name: Име на проучването
+            
+        Returns:
+            Redshift стойности
+        """
+        
+        if survey_name not in self.covariance_matrices:
+            logger.warning(f"Survey '{survey_name}' не е намерен. Използване на 'Combined'.")
+            survey_name = 'Combined'
+        
+        return self.covariance_matrices[survey_name]['redshifts']
+    
+    def get_diagonal_errors(self, survey_name: str = 'Combined') -> np.ndarray:
+        """
+        Получаване на диагоналните грешки от ковариационната матрица
+        
+        Args:
+            survey_name: Име на проучването
+            
+        Returns:
+            Диагонални грешки
+        """
+        
+        covariance = self.get_full_covariance_matrix(survey_name)
+        return np.sqrt(np.diag(covariance))
+    
+    def validate_covariance_matrix(self, survey_name: str = 'Combined') -> Dict:
+        """
+        Валидиране на ковариационната матрица
+        
+        Args:
+            survey_name: Име на проучването
+            
+        Returns:
+            Статистики за валидиране
+        """
+        
+        covariance = self.get_full_covariance_matrix(survey_name)
+        
+        # Проверка на положителна определеност
+        eigenvalues = np.linalg.eigvals(covariance)
+        is_positive_definite = np.all(eigenvalues > 0)
+        
+        # Проверка на симетричност
+        is_symmetric = np.allclose(covariance, covariance.T)
+        
+        # Condition number
+        condition_number = np.linalg.cond(covariance)
+        
+        # Determinant
+        determinant = np.linalg.det(covariance)
+        
+        return {
+            'is_positive_definite': is_positive_definite,
+            'is_symmetric': is_symmetric,
+            'condition_number': condition_number,
+            'determinant': determinant,
+            'min_eigenvalue': np.min(eigenvalues),
+            'max_eigenvalue': np.max(eigenvalues),
+            'matrix_shape': covariance.shape
+        }
+
     def get_covariance_matrix(self, survey_name: str) -> Dict:
         """Получаване на ковариационна матрица за конкретно проучване"""
         if survey_name not in self.covariance_matrices:

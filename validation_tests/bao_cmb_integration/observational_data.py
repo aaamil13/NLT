@@ -579,13 +579,17 @@ def create_bao_data() -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.n
     
     # Генериране на пълна ковариационна матрица
     try:
-        covariance_matrix = bao_cov.get_full_covariance_matrix(z_values, measurements, errors)
+        covariance_matrix = bao_cov.get_full_covariance_matrix('Combined')
         logger.info(f"Генерирана пълна BAO ковариационна матрица {covariance_matrix.shape}")
         logger.info(f"Condition number: {np.linalg.cond(covariance_matrix):.2e}")
         
         # Валидация на матрицата
-        if not bao_cov.validate_covariance_matrix(covariance_matrix):
-            logger.warning("Ковариационната матрица не премина валидацията - използване на диагонална")
+        validation_results = bao_cov.validate_covariance_matrix('Combined')
+        if not validation_results['is_positive_definite']:
+            logger.warning("Ковариационната матрица не е положително определена - използване на диагонална")
+            covariance_matrix = None
+        elif validation_results['condition_number'] > 1e12:
+            logger.warning("Ковариационната матрица е лошо кондиционирана - използване на диагонална")
             covariance_matrix = None
             
     except Exception as e:
